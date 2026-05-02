@@ -930,6 +930,7 @@
 
 
        let selectedPlan = [];
+	let recentlySwapped = []; // NEW: Memory for rejected meals
 
         // UI NAVIGATION
         function switchTab(tabId) {
@@ -970,27 +971,62 @@
             });
         }
 
-	// RENDER PLAN
+	// RENDER PLAN (WITH QUICK ADD)
         function renderPlan() {
             const grid = document.getElementById('plan-grid');
             grid.innerHTML = '';
+            
+            // Render existing selected meals
             if(selectedPlan.length === 0) {
-                grid.innerHTML = '<p style="text-align:center; width:100%;">Your plan is empty. Go to the Library to add meals!</p>';
-                return;
-            }
-            selectedPlan.forEach(id => {
-                const recipe = recipes.find(r => r.id === id);
-                grid.innerHTML += `
-                    <div class="card">
-                        <h3>${recipe.name}</h3>
-                        <div class="card-actions">
-                            <button class="btn btn-view" onclick="openModal(${recipe.id})">Cook</button>
-                            <button class="btn btn-swap" onclick="swapRecipe(${recipe.id})">Swap 🔄</button>
-                            <button class="btn btn-remove" onclick="togglePlan(${recipe.id})">Remove</button>
+                grid.innerHTML = '<p style="text-align:center; width:100%;">Your plan is empty. Click below to add a meal!</p>';
+            } else {
+                selectedPlan.forEach(id => {
+                    const recipe = recipes.find(r => r.id === id);
+                    grid.innerHTML += `
+                        <div class="card">
+                            <h3>${recipe.name}</h3>
+                            <div class="card-actions">
+                                <button class="btn btn-view" onclick="openModal(${recipe.id})">Cook</button>
+                                <button class="btn btn-swap" onclick="swapRecipe(${recipe.id})">Swap 🔄</button>
+                                <button class="btn btn-remove" onclick="togglePlan(${recipe.id})">Remove</button>
+                            </div>
                         </div>
+                    `;
+                });
+            }
+
+            // NEW: Add the "Quick Add" Dropdown Card
+            let availableRecipes = recipes.filter(r => !selectedPlan.includes(r.id));
+            if (availableRecipes.length > 0) {
+                // Sort the dropdown alphabetically so it's easy to read
+                availableRecipes.sort((a, b) => a.name.localeCompare(b.name));
+                let optionsHTML = availableRecipes.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+
+                grid.innerHTML += `
+                    <div class="card" style="border: 2px dashed #ccc; background: #fafafa; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: none;">
+                        <h3 style="color: #666; font-size: 1.1rem; margin-top: 0;">➕ Add Another Meal</h3>
+                        <select id="quick-add-select" style="width: 100%; padding: 10px; margin-bottom: 15px; border-radius: 4px; border: 1px solid #ccc; font-family: inherit;">
+                            <option value="">-- Choose a recipe --</option>
+                            ${optionsHTML}
+                        </select>
+                        <button class="btn btn-add" style="width: 100%;" onclick="quickAddFromPlan()">Add to Plan</button>
                     </div>
                 `;
-            });
+            }
+        }
+
+	// QUICK ADD FROM PLAN PAGE
+        function quickAddFromPlan() {
+            const select = document.getElementById('quick-add-select');
+            const newId = parseInt(select.value);
+            
+            // If they clicked the button without selecting a meal, do nothing
+            if (!newId) return; 
+
+            selectedPlan.push(newId);
+            renderLibrary();
+            renderPlan();
+            generateShoppingList();
         }
 
         // TOGGLE RECIPE IN PLAN
@@ -1005,22 +1041,32 @@
             generateShoppingList();
         }
 
-	// SMART SWAP A SINGLE RECIPE
+	// SMART SWAP A SINGLE RECIPE (WITH MEMORY)
         function swapRecipe(oldId) {
             // 1. Remove the unwanted recipe from the plan
             selectedPlan = selectedPlan.filter(rId => rId !== oldId);
 
-            // 2. Build a "Pantry" out of the REMAINING meals in the plan
+            // 2. Add it to the "Recently Swapped" memory (keep the last 10)
+            recentlySwapped.push(oldId);
+            if (recentlySwapped.length > 10) recentlySwapped.shift();
+
+            // 3. Build a "Pantry" out of the REMAINING meals in the plan
             let currentPantry = new Set();
             selectedPlan.forEach(id => {
                 let recipe = recipes.find(r => r.id === id);
                 recipe.ingredients.forEach(ing => currentPantry.add(getBaseIngredient(ing)));
             });
 
-            // 3. Filter out meals already in the plan AND strictly ban the one we just removed!
-            let availableRecipes = recipes.filter(r => !selectedPlan.includes(r.id) && r.id !== oldId);
+            // 4. Filter out meals already in the plan AND those we recently rejected
+            let availableRecipes = recipes.filter(r => !selectedPlan.includes(r.id) && !recentlySwapped.includes(r.id));
 
-            // 4. Score the remaining recipes to find the best low-waste match
+            // Failsafe: If we somehow rejected everything, wipe the memory and start fresh
+            if (availableRecipes.length === 0) {
+                recentlySwapped = [oldId]; 
+                availableRecipes = recipes.filter(r => !selectedPlan.includes(r.id) && r.id !== oldId);
+            }
+
+            // 5. Score the remaining recipes
             let bestScore = -1;
             let bestIndex = -1;
 
@@ -1032,7 +1078,8 @@
                     }
                 });
                 
-                score += Math.random(); // Tie-breaker
+                // Add a bit of randomness to break ties
+                score += (Math.random() * 0.5); 
 
                 if (score > bestScore) {
                     bestScore = score;
@@ -1040,15 +1087,16 @@
                 }
             });
 
-            // 5. Add the new winning recipe to the plan
+            // 6. Add the new winning recipe
             let nextMeal = availableRecipes[bestIndex];
             selectedPlan.push(nextMeal.id);
 
-            // 6. Refresh the UI
+            // 7. Refresh the UI
             renderLibrary();
             renderPlan();
             generateShoppingList();
         }
+
         // HELPER: Strip measurements to find the core ingredient (e.g., "2 tbsp Gochujang" -> "gochujang")
         function getBaseIngredient(item) {
             let lower = item.toLowerCase();
