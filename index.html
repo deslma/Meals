@@ -1107,7 +1107,7 @@
             switchTab('plan'); 
         }
 
-        // GENERATE SHOPPING LIST
+	// GENERATE SHOPPING LIST
         function generateShoppingList() {
             const listDiv = document.getElementById('shopping-items');
             listDiv.innerHTML = '';
@@ -1117,24 +1117,89 @@
                 return;
             }
 
-            let allIngredients = [];
+            let aggregated = {};
+
             selectedPlan.forEach(id => {
                 const recipe = recipes.find(r => r.id === id);
-                allIngredients = allIngredients.concat(recipe.ingredients);
+                recipe.ingredients.forEach(ing => {
+                    // Ignore placeholders
+                    if (ing === "Ingredients from card") return;
+
+                    // This regex isolates the number, the unit (g, tbsp, etc.), and the ingredient name
+                    const match = ing.match(/^([\d\.\/]+)?\s*(g|ml|tbsp|tsp|clove|cloves|thumb|tin|tins|handful|heads|packs|stalk|bunch)?\s*(.*)/i);
+
+                    if (match) {
+                        let qtyStr = match[1];
+                        let unit = match[2] ? match[2].toLowerCase() : "";
+                        let name = match[3].trim();
+                        
+                        // Standardize plurals so things group correctly (clove + cloves = cloves)
+                        if (unit === 'cloves') unit = 'clove';
+                        if (unit === 'tins') unit = 'tin';
+
+                        // Parse the number (handles fractions like "1/2" and decimals)
+                        let qty = 0;
+                        let hasQty = qtyStr !== undefined;
+                        if (hasQty) {
+                            if (qtyStr.includes('/')) {
+                                let parts = qtyStr.split('/');
+                                qty = parseFloat(parts[0]) / parseFloat(parts[1]);
+                            } else {
+                                qty = parseFloat(qtyStr);
+                            }
+                        }
+
+                        // Create a unique key (e.g., "garlic_clove" or "chicken thighs_g")
+                        let key = name.toLowerCase() + "_" + unit;
+
+                        if (aggregated[key]) {
+                            // If we already have it, add to the total
+                            if (hasQty) aggregated[key].qty += qty;
+                        } else {
+                            // If it's new, add it to our aggregator
+                            aggregated[key] = {
+                                qty: hasQty ? qty : null,
+                                unit: unit,
+                                originalName: name
+                            };
+                        }
+                    } else {
+                        // Fallback if it doesn't match normal formatting (e.g., "Vegetable Oil")
+                        aggregated[ing] = { qty: null, unit: '', originalName: ing };
+                    }
+                });
             });
 
-            // Clean up duplicates (basic string match)
-            const uniqueIngredients = [...new Set(allIngredients)].sort();
-
-            uniqueIngredients.forEach(item => {
-                if (item !== "Ingredients from card") {
-                    listDiv.innerHTML += `
-                        <div class="shopping-item">
-                            <input type="checkbox" id="item-${item}">
-                            <label for="item-${item}">${item}</label>
-                        </div>
-                    `;
+            // Convert to an array and format it beautifully
+            const finalItems = Object.values(aggregated).map(item => {
+                if (item.qty === null) return item.originalName; // No number needed
+                
+                // Format the number to avoid crazy decimals
+                let displayQty = Number.isInteger(item.qty) ? item.qty : parseFloat(item.qty.toFixed(2));
+                
+                // Add an 's' back to units if there's more than 1
+                let displayUnit = item.unit;
+                if (displayQty > 1) {
+                    if (item.unit === 'clove') displayUnit = 'cloves';
+                    if (item.unit === 'tin') displayUnit = 'tins';
                 }
+
+                // Assemble the string (closing the gap for g/ml, leaving spaces for tbsp/cloves)
+                let prefix = `${displayQty}${displayUnit ? (['g','ml'].includes(displayUnit) ? displayUnit : ' ' + displayUnit) : ''} `;
+                
+                return `${prefix}${item.originalName}`.trim();
+            }).sort();
+
+            // Render to the screen
+            finalItems.forEach(item => {
+                // Create an ID-safe string so the checkboxes work perfectly
+                let safeId = item.replace(/[^a-zA-Z0-9]/g, '-');
+                listDiv.innerHTML += `
+                    <div class="shopping-item">
+                        <input type="checkbox" id="item-${safeId}">
+                        <label for="item-${safeId}">${item}</label>
+                    </div>
+                `;
             });
         }
 
