@@ -971,15 +971,39 @@
             });
         }
 
-	// RENDER PLAN (WITH QUICK ADD)
+	// RENDER PLAN (WITH QUICK ADD, CLEAR, AND AUTO-FILL)
         function renderPlan() {
             const grid = document.getElementById('plan-grid');
             grid.innerHTML = '';
             
-            // Render existing selected meals
+            // STATE 1: If the plan is completely empty
             if(selectedPlan.length === 0) {
-                grid.innerHTML = '<p style="text-align:center; width:100%;">Your plan is empty. Click below to add a meal!</p>';
+                grid.innerHTML = `
+                    <div style="grid-column: 1 / -1; text-align: center; padding: 3rem 1rem; background: #fff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                        <h3 style="color: #333; margin-top: 0;">Your plan is empty!</h3>
+                        <p style="font-size: 1.1rem; color: #666; margin-bottom: 2rem;">Add meals manually from the Library, or let me build a smart, low-waste menu for you.</p>
+                        <button class="btn-suggest" onclick="suggestSmartMeals()">✨ Auto-Fill 5 Meals</button>
+                    </div>
+                `;
             } else {
+                // STATE 2: If there are meals in the plan
+                
+                // Determine if we need to disable the "Fill" button (if they already have 5+ meals)
+                const isFull = selectedPlan.length >= 5;
+                
+                // Add the control buttons to the top row
+                grid.innerHTML += `
+                    <div style="grid-column: 1 / -1; display: flex; justify-content: space-between; margin-bottom: 5px;">
+                        <button class="btn btn-add" style="max-width: 220px; padding: 10px;" onclick="suggestSmartMeals()" ${isFull ? 'disabled style="background-color: #ccc; cursor: not-allowed;"' : ''}>
+                            ✨ Fill Remaining
+                        </button>
+                        <button class="btn btn-remove" style="max-width: 200px; padding: 10px;" onclick="clearPlan()">
+                            🗑️ Clear Plan
+                        </button>
+                    </div>
+                `;
+
+                // Render the selected recipe cards
                 selectedPlan.forEach(id => {
                     const recipe = recipes.find(r => r.id === id);
                     grid.innerHTML += `
@@ -995,10 +1019,10 @@
                 });
             }
 
-            // NEW: Add the "Quick Add" Dropdown Card
+            // ALWAYS ADD: The "Quick Add" Dropdown Card
             let availableRecipes = recipes.filter(r => !selectedPlan.includes(r.id));
             if (availableRecipes.length > 0) {
-                // Sort the dropdown alphabetically so it's easy to read
+                // Sort the dropdown alphabetically
                 availableRecipes.sort((a, b) => a.name.localeCompare(b.name));
                 let optionsHTML = availableRecipes.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
 
@@ -1036,6 +1060,15 @@
             } else {
                 selectedPlan.push(id);
             }	
+            renderLibrary();
+            renderPlan();
+            generateShoppingList();
+        }
+
+	// CLEAR ENTIRE PLAN
+        function clearPlan() {
+            selectedPlan = [];
+            recentlySwapped = []; // Wipe the swap memory too
             renderLibrary();
             renderPlan();
             generateShoppingList();
@@ -1104,36 +1137,53 @@
             return lower.replace(/^(\d+(\.\d+)?(-|\/)?\d*\s*(g|tbsp|tsp|ml|cloves|thumb|tin|handful|heads|packs|stalk|bunch)\s*|^\d+\s*)/, '').trim();
         }
 
-        // SMART SUGGEST 5 MEALS FUNCTION
+	// SMART SUGGEST / FILL PLAN
         function suggestSmartMeals() {
-            selectedPlan = []; 
             let availableRecipes = [...recipes]; 
             
-            // 1. Pick a random seed meal to start the week
-            let seedIndex = Math.floor(Math.random() * availableRecipes.length);
-            let firstMeal = availableRecipes.splice(seedIndex, 1)[0];
-            selectedPlan.push(firstMeal.id);
+            // 1. If your plan already has 5 meals, wipe it clean to generate a fresh batch
+            if (selectedPlan.length >= 5) {
+                selectedPlan = [];
+                recentlySwapped = [];
+            }
             
-            // 2. Start a "Pantry" of ingredients we are already buying this week
-            let currentPantry = new Set(firstMeal.ingredients.map(getBaseIngredient));
+            // 2. If your plan is completely empty, pick a random seed meal first
+            if (selectedPlan.length === 0) {
+                let seedIndex = Math.floor(Math.random() * availableRecipes.length);
+                let firstMeal = availableRecipes.splice(seedIndex, 1)[0];
+                selectedPlan.push(firstMeal.id);
+            }
+            
+            // 3. Start a "Pantry" out of whatever meals are CURRENTLY in your plan
+            let currentPantry = new Set();
+            selectedPlan.forEach(id => {
+                let recipe = recipes.find(r => r.id === id);
+                recipe.ingredients.forEach(ing => currentPantry.add(getBaseIngredient(ing)));
+            });
 
-            // 3. Find 4 more meals that share the highest number of ingredients
+            // 4. Filter out meals already in the plan or recently swapped
+            availableRecipes = availableRecipes.filter(r => !selectedPlan.includes(r.id) && !recentlySwapped.includes(r.id));
+
+            // Failsafe in case we run out of available recipes
+            if (availableRecipes.length === 0) {
+                recentlySwapped = []; 
+                availableRecipes = recipes.filter(r => !selectedPlan.includes(r.id));
+            }
+
+            // 5. Fill the REST of the plan up to 5 meals based on pantry overlap
             while (selectedPlan.length < 5 && availableRecipes.length > 0) {
                 let bestScore = -1;
                 let bestIndex = -1;
 
                 availableRecipes.forEach((recipe, index) => {
                     let score = 0;
-                    
-                    // Check how many ingredients overlap with our current pantry
                     recipe.ingredients.forEach(ing => {
                         if (currentPantry.has(getBaseIngredient(ing))) {
                             score += 1;
                         }
                     });
                     
-                    // Add a tiny fraction of randomness so ties are broken uniquely each time
-                    score += Math.random(); 
+                    score += (Math.random() * 0.5); // Tie-breaker
 
                     if (score > bestScore) {
                         bestScore = score;
@@ -1141,15 +1191,12 @@
                     }
                 });
 
-                // Add the highest scoring meal to the plan
                 let nextMeal = availableRecipes.splice(bestIndex, 1)[0];
                 selectedPlan.push(nextMeal.id);
-                
-                // Add the new ingredients to the pantry for the next round of scoring
                 nextMeal.ingredients.forEach(ing => currentPantry.add(getBaseIngredient(ing)));
             }
 
-            // Update the UI
+            // 6. Refresh the UI
             renderLibrary();
             renderPlan();
             switchTab('plan'); 
