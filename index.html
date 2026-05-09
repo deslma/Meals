@@ -1187,8 +1187,8 @@
 
 
 
-       let selectedPlan = [];
-	let recentlySwapped = []; // NEW: Memory for rejected meals
+		let selectedPlan = JSON.parse(localStorage.getItem('myMealPlan')) || [];
+       	 let recentlySwapped = JSON.parse(localStorage.getItem('mySwappedMeals')) || [];
 
         // UI NAVIGATION
         function switchTab(tabId) {
@@ -1460,8 +1460,12 @@
             switchTab('plan'); 
         }
 
-	// GENERATE SHOPPING LIST
+	// GENERATE SHOPPING LIST (WITH MEMORY & SPELLING FIXES)
         function generateShoppingList() {
+            // 1. Save the plan to the browser's memory every time this updates
+            localStorage.setItem('myMealPlan', JSON.stringify(selectedPlan));
+            localStorage.setItem('mySwappedMeals', JSON.stringify(recentlySwapped));
+
             const listDiv = document.getElementById('shopping-items');
             listDiv.innerHTML = '';
             
@@ -1477,7 +1481,6 @@
                 recipe.ingredients.forEach(ing => {
                     if (ing === "Ingredients from card") return;
 
-                    // 1. Smarter Regex: Added \b (word boundary) so it stops chopping 'cloves' in half!
                     const match = ing.match(/^([\d\.\/]+)?\s*(g|ml|tbsp|tsp|cloves|clove|thumb|tins|tin|handful|heads|head|packs|pack|stalk|bunch)?\b\s*(.*)/i);
 
                     if (match) {
@@ -1485,29 +1488,26 @@
                         let unit = match[2] ? match[2].toLowerCase() : "";
                         let rawName = match[3].trim();
                         
-                        // 2. Strip parenthetical notes completely (e.g., "(or paste)")
+                        // 2. SPELLING FIXER: Strip parentheses and fix rogue plurals/variations
                         let cleanName = rawName.replace(/\s*\(.*?\)\s*/g, '').trim();
+                        cleanName = cleanName.replace(/chillies/gi, 'chilli').replace(/chillis/gi, 'chilli');
+                        cleanName = cleanName.replace(/peppers/gi, 'pepper').replace(/bell pepper/gi, 'pepper');
+                        cleanName = cleanName.replace(/tomatoes/gi, 'tomato').replace(/potatoes/gi, 'potato');
                         
-                        // 3. Smart Singularization (Converts "Limes" to "Lime" and "Tomatoes" to "Tomato")
+                        // Standardize singulars
                         let lowerName = cleanName.toLowerCase();
                         if (lowerName.endsWith('s') && !lowerName.endsWith('ss')) {
-                            if (lowerName.endsWith('oes')) {
-                                cleanName = cleanName.slice(0, -2);
-                            } else {
-                                cleanName = cleanName.slice(0, -1);
-                            }
+                            cleanName = cleanName.slice(0, -1);
                         }
                         
-                        // Capitalize nicely for the list
+                        // Capitalize nicely
                         cleanName = cleanName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
-                        // Standardize unit names
                         if (unit === 'cloves') unit = 'clove';
                         if (unit === 'tins') unit = 'tin';
                         if (unit === 'heads') unit = 'head';
                         if (unit === 'packs') unit = 'pack';
 
-                        // Parse the number
                         let qty = 0;
                         let hasQty = qtyStr !== undefined;
                         if (hasQty) {
@@ -1519,13 +1519,10 @@
                             }
                         }
 
-                        // 4. Group STRICTLY by the clean base ingredient name
                         let key = cleanName.toLowerCase();
 
                         if (aggregated[key]) {
-                            // If we already have it, add the numbers
                             if (hasQty) aggregated[key].qty += qty;
-                            // Inherit the unit if a previous recipe didn't specify one
                             if (!aggregated[key].unit && unit) aggregated[key].unit = unit;
                         } else {
                             aggregated[key] = {
@@ -1535,7 +1532,6 @@
                             };
                         }
                     } else {
-                        // Fallback just in case formatting is totally missing
                         let cleanName = ing.replace(/\s*\(.*?\)\s*/g, '').trim();
                         let key = cleanName.toLowerCase();
                         if (!aggregated[key]) {
@@ -1544,6 +1540,50 @@
                     }
                 });
             });
+
+            const finalItems = Object.values(aggregated).map(item => {
+                if (item.qty === 0) return item.displayName; 
+                
+                let displayQty = Number.isInteger(item.qty) ? item.qty : parseFloat(item.qty.toFixed(2));
+                let displayUnit = item.unit;
+                let displayName = item.displayName;
+
+                // Re-pluralize for the final display
+                if (displayQty > 1) {
+                    if (item.unit === 'clove') displayUnit = 'cloves';
+                    if (item.unit === 'tin') displayUnit = 'tins';
+                    if (item.unit === 'head') displayUnit = 'heads';
+                    if (item.unit === 'pack') displayUnit = 'packs';
+                    
+                    if (item.unit === '' && !displayName.toLowerCase().endsWith('ss')) {
+                        if (displayName.toLowerCase().endsWith('o')) {
+                            displayName += 'es';
+                        } else {
+                            displayName += 's';
+                        }
+                    }
+                }
+
+                let prefix = `${displayQty}${displayUnit ? (['g','ml'].includes(displayUnit) ? displayUnit : ' ' + displayUnit) : ''} `;
+                
+                return `${prefix}${displayName}`.trim();
+            }).sort();
+
+            // 3. RENDER WITH CHECKBOX MEMORY
+            finalItems.forEach(item => {
+                let safeId = item.replace(/[^a-zA-Z0-9]/g, '-');
+                
+                // Check if this specific item was saved as 'checked' in the browser
+                let isChecked = localStorage.getItem('check-' + safeId) === 'true' ? 'checked' : '';
+                
+                listDiv.innerHTML += `
+                    <div class="shopping-item">
+                        <input type="checkbox" id="item-${safeId}" ${isChecked} onchange="localStorage.setItem('check-${safeId}', this.checked)">
+                        <label for="item-${safeId}">${item}</label>
+                    </div>
+                `;
+            });
+        }
 
             // Convert to an array and format the text beautifully
             const finalItems = Object.values(aggregated).map(item => {
@@ -1610,8 +1650,9 @@
         }
 
         // Initialize App
-        renderLibrary();
+		renderLibrary();
         renderPlan();
+        generateShoppingList();
 
     </script>
 </body>
