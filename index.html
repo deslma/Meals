@@ -1585,50 +1585,6 @@
             });
         }
 
-            // Convert to an array and format the text beautifully
-            const finalItems = Object.values(aggregated).map(item => {
-                if (item.qty === 0) return item.displayName; // E.g., Vegetable Oil
-                
-                // Format the number to avoid crazy decimals
-                let displayQty = Number.isInteger(item.qty) ? item.qty : parseFloat(item.qty.toFixed(2));
-                let displayUnit = item.unit;
-                let displayName = item.displayName;
-
-                // Dynamically add the "s" back if we have more than 1!
-                if (displayQty > 1) {
-                    if (item.unit === 'clove') displayUnit = 'cloves';
-                    if (item.unit === 'tin') displayUnit = 'tins';
-                    if (item.unit === 'head') displayUnit = 'heads';
-                    if (item.unit === 'pack') displayUnit = 'packs';
-                    
-                    // If there is no unit (like "Lime"), pluralize the item name itself
-                    if (item.unit === '' && !displayName.toLowerCase().endsWith('ss')) {
-                        if (displayName.toLowerCase().endsWith('o')) {
-                            displayName += 'es';
-                        } else {
-                            displayName += 's';
-                        }
-                    }
-                }
-
-                // Assemble the string smoothly
-                let prefix = `${displayQty}${displayUnit ? (['g','ml'].includes(displayUnit) ? displayUnit : ' ' + displayUnit) : ''} `;
-                
-                return `${prefix}${displayName}`.trim();
-            }).sort();
-
-            // Render to the screen
-            finalItems.forEach(item => {
-                let safeId = item.replace(/[^a-zA-Z0-9]/g, '-');
-                listDiv.innerHTML += `
-                    <div class="shopping-item">
-                        <input type="checkbox" id="item-${safeId}">
-                        <label for="item-${safeId}">${item}</label>
-                    </div>
-                `;
-            });
-        }
-
         // MODAL LOGIC
         function openModal(id) {
             const recipe = recipes.find(r => r.id === id);
